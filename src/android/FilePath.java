@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Environment;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
+import android.webkit.MimeTypeMap;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaInterface;
@@ -86,13 +87,8 @@ public class FilePath extends CordovaPlugin {
         this.uriStr = args.getString(0);
 
         if (action.equals("resolveNativePath")) {
-
-            if (hasReadPermission()) {
-                resolveNativePath();
-            }
-            else {
-                getReadPermission(READ_REQ_CODE);
-            }
+            // convert to a native filepath, requesting permission if necessary
+            resolveNativePath();
 
             return true;
         }
@@ -142,10 +138,23 @@ public class FilePath extends CordovaPlugin {
         else {
             Log.d(TAG, "Filepath: " + filePath);
 
+            // check the mimetype and request permission if needed
+            MimeTypeMap mime = MimeTypeMap.getSingleton();
+            String ext = mime.getFileExtensionFromUrl(filePath).toLowerCase();
+            String type = mime.getMimeTypeFromExtension(ext);
+            if (type != null) {
+                if ((type.contains("video/")) || (type.contains("audio/")) || (type.contains("image/"))) {
+                    // need to request permission for these types
+                    if (hasReadPermission() == false) {
+                        getReadPermission(READ_REQ_CODE);
+                        return; // onRequestPermissionResult returns the status of the permission request
+                    }
+                }
+            }
+            // we either have or didn't need permissions -- return success
             this.callback.success("file://" + filePath);
         }
     }
-
 
     public void onRequestPermissionResult(int requestCode, String[] permissions, int[] grantResults) throws JSONException {
         for (int r : grantResults) {
@@ -326,6 +335,20 @@ public class FilePath extends CordovaPlugin {
     }
 
     /**
+     * sometimes in raw type, the second part is a valid filepath
+     *
+     * @param rawPath The raw path
+     */
+    private static String getRawFilepath(String rawPath) {
+        final String[] split = rawPath.split(":");
+        if (fileExists(split[1])) {
+            return split[1];
+        }
+
+        return "";
+    }
+
+    /**
      * Get a file path from a Uri. This will get the the path for Storage Access
      * Framework Documents, as well as the _data field for the MediaStore and
      * other file-based ContentProviders.<br>
@@ -385,6 +408,13 @@ public class FilePath extends CordovaPlugin {
                 }
                 //
                 final String id = DocumentsContract.getDocumentId(uri);
+
+                // sometimes in raw type, the second part is a valid filepath
+                final String rawFilepath = getRawFilepath(id);
+                if (rawFilepath != "") {
+                    return rawFilepath;
+                }
+
                 String[] contentUriPrefixesToTry = new String[]{
                         "content://downloads/public_downloads",
                         "content://downloads/my_downloads"
